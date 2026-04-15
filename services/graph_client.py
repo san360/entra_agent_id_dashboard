@@ -205,8 +205,7 @@ class ARMClient:
     """
 
     ARM_BASE = "https://management.azure.com"
-    API_VERSION_COGNITIVE = "2024-10-01"
-    API_VERSION_PROJECTS = "2025-09-01"
+    API_VERSION = "2025-06-01"
 
     def __init__(self, config: AzureConfig) -> None:
         self._config = config
@@ -243,26 +242,19 @@ class ARMClient:
         return response.json()
 
     def _put(self, url: str, json_body: dict = None, params: dict = None) -> dict:
-        last_exc = None
-        for attempt in range(3):
-            response = httpx.put(
-                url, headers=self._headers(), json=json_body, params=params,
-                timeout=90,
-            )
-            if response.status_code < 400:
-                return response.json()
-            # Retry on transient 500 errors
-            if response.status_code in (500, 502, 503, 504) and attempt < 2:
-                time.sleep(5 * (attempt + 1))
-                continue
-            error_msg = response.text
-            try:
-                body = response.json()
-                error_msg = body.get("error", {}).get("message", error_msg)
-            except Exception:
-                pass
-            last_exc = Exception(f"ARM PUT failed ({response.status_code}): {error_msg}")
-        raise last_exc
+        response = httpx.put(
+            url, headers=self._headers(), json=json_body, params=params,
+            timeout=90,
+        )
+        if response.status_code < 400:
+            return response.json()
+        error_msg = response.text
+        try:
+            body = response.json()
+            error_msg = body.get("error", {}).get("message", error_msg)
+        except Exception:
+            pass
+        raise Exception(f"ARM PUT failed ({response.status_code}): {error_msg}")
 
     def _delete(self, url: str, params: dict = None) -> dict:
         response = httpx.delete(
@@ -296,7 +288,7 @@ class ARMClient:
         data = self._get(
             f"{self.ARM_BASE}/subscriptions/{subscription_id}"
             f"/providers/Microsoft.CognitiveServices/accounts",
-            params={"api-version": self.API_VERSION_COGNITIVE},
+            params={"api-version": self.API_VERSION},
         )
         return data.get("value", [])
 
@@ -307,7 +299,7 @@ class ARMClient:
             f"/resourceGroups/{resource_group}"
             f"/providers/Microsoft.CognitiveServices/accounts/{account_name}"
             f"/projects",
-            params={"api-version": self.API_VERSION_PROJECTS},
+            params={"api-version": self.API_VERSION},
         )
         return data.get("value", [])
 
@@ -334,7 +326,55 @@ class ARMClient:
         }
         if description:
             body["properties"]["description"] = description
-        return self._put(url, json_body=body, params={"api-version": self.API_VERSION_PROJECTS})
+        return self._put(url, json_body=body, params={"api-version": self.API_VERSION})
+
+    def create_cognitive_account(
+        self,
+        subscription_id: str,
+        resource_group: str,
+        account_name: str,
+        location: str,
+        kind: str = "AIServices",
+        sku: str = "S0",
+    ) -> dict:
+        """Create an Azure AI Services (Cognitive Services) account via ARM PUT.
+
+        Follows the official 00-basic Bicep template:
+        - kind=AIServices, sku=S0
+        - allowProjectManagement=true (required for Foundry)
+        - customSubDomainName set to account_name (required for API endpoint)
+        """
+        url = (
+            f"{self.ARM_BASE}/subscriptions/{subscription_id}"
+            f"/resourceGroups/{resource_group}"
+            f"/providers/Microsoft.CognitiveServices/accounts/{account_name}"
+        )
+        body = {
+            "kind": kind,
+            "location": location,
+            "sku": {"name": sku},
+            "identity": {"type": "SystemAssigned"},
+            "properties": {
+                "allowProjectManagement": True,
+                "customSubDomainName": account_name,
+                "disableLocalAuth": False,
+            },
+        }
+        return self._put(url, json_body=body, params={"api-version": self.API_VERSION})
+
+    def ensure_resource_group(
+        self,
+        subscription_id: str,
+        resource_group: str,
+        location: str,
+    ) -> dict:
+        """Create a resource group if it doesn't exist via ARM PUT."""
+        url = (
+            f"{self.ARM_BASE}/subscriptions/{subscription_id}"
+            f"/resourceGroups/{resource_group}"
+        )
+        body = {"location": location}
+        return self._put(url, json_body=body, params={"api-version": "2022-09-01"})
 
     def delete_foundry_project(
         self,
@@ -350,4 +390,4 @@ class ARMClient:
             f"/providers/Microsoft.CognitiveServices/accounts/{account_name}"
             f"/projects/{project_name}"
         )
-        return self._delete(url, params={"api-version": self.API_VERSION_PROJECTS})
+        return self._delete(url, params={"api-version": self.API_VERSION})

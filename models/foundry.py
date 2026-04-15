@@ -2,12 +2,12 @@
 
 Hierarchy:
   FoundryResource (AI Services account)
-    └── FoundryProject (per-project, linked to a Blueprint)
+    └── FoundryProject (per-project)
           └── FoundryAgent (per published agent, linked to an AgentIdentity)
 
-Blueprints operate at the PROJECT level, not the resource level.
-One Foundry resource can contain many projects, each with its own set of
-blueprints (project blueprint, manager blueprint, per-agent blueprints).
+Foundry projects and Agent Identity Blueprints are independent systems.
+Blueprints live in Entra ID (Graph API) while Foundry projects live in
+Azure ARM. There is no direct relationship between them.
 """
 
 from __future__ import annotations
@@ -16,21 +16,6 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import List, Optional
-
-
-# ── Business Domains ─────────────────────────────────────────────────────────
-
-BUSINESS_DOMAINS = [
-    "HR",
-    "Finance",
-    "Customer Service",
-    "IT Operations",
-    "Sales",
-    "Marketing",
-    "Legal",
-    "Engineering",
-    "General",
-]
 
 
 @dataclass
@@ -47,20 +32,11 @@ class FoundryAgent:
 
 @dataclass
 class FoundryProject:
-    """An Azure AI Foundry project that hosts AI agents.
-
-    Each project is linked to ONE blueprint (the project-level blueprint).
-    Foundry auto-creates: Project BP → Manager BP → Per-Agent BPs.
-    In the "Blueprint per Business Domain" pattern, all projects in the
-    same domain share the same domain-level blueprint.
-    """
+    """An Azure AI Foundry project that hosts AI agents."""
     name: str
-    blueprint_id: str  # Links to Blueprint.id (domain blueprint)
     resource_id: str = ""  # Links to FoundryResource.id
     resource_group: str = ""
     region: str = "eastus"
-    environment: str = "dev"  # dev | test | prod
-    business_domain: str = "General"
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     subscription_id: str = ""
     endpoint: str = ""
@@ -92,7 +68,6 @@ class FoundryResource:
     """An Azure AI Services / Cognitive Services account (the parent of Foundry projects).
 
     One FoundryResource can host MULTIPLE FoundryProjects.
-    Blueprints are scoped at the PROJECT level, not here.
     """
     name: str
     resource_group: str = ""

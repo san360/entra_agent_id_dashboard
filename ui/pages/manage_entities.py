@@ -12,11 +12,10 @@ from config.theme import (
     COLOR_TEXT_SECONDARY, COLOR_DANGER,
 )
 from models.blueprint import CredentialType
-from models.foundry import BUSINESS_DOMAINS
 from services.blueprint_service import BlueprintService
 from services.cache import SessionCache
 from services.foundry_service import FoundryService
-from services.graph_client import GraphClient
+from services.graph_client import GraphClient, GraphAPIError
 
 
 def render(
@@ -50,10 +49,10 @@ def render(
         _render_create_identity(bp_svc, store)
 
     with tab_resource:
-        _render_create_resource(foundry_svc, store)
+        _render_create_resource(foundry_svc, store, config)
 
     with tab_foundry:
-        _render_create_foundry(bp_svc, foundry_svc, store)
+        _render_create_foundry(foundry_svc, store)
 
     with tab_agent:
         _render_publish_agent(bp_svc, foundry_svc, store)
@@ -63,6 +62,12 @@ def render(
 
 
 # ── Create Blueprint ─────────────────────────────────────────────────────────
+
+# Business domains for blueprint creation presets
+BUSINESS_DOMAINS = [
+    "HR", "Finance", "Customer Service", "IT Operations",
+    "Sales", "Marketing", "Legal", "Engineering", "General",
+]
 
 # ── Domain presets for auto-populating blueprint fields ────────────────────────
 
@@ -188,13 +193,33 @@ def _render_create_blueprint(bp_svc: BlueprintService, store: dict, config: Azur
             if not name or not tenant:
                 st.error("Display Name and Tenant are required.")
             else:
-                bp_svc.create_blueprint(
-                    display_name=name,
-                    description=desc or f"{domain} domain blueprint",
-                    credential_type=cred_options[cred_label],
-                    tenant_id=tenant,
-                )
-                st.success(f"Domain Blueprint **{name}** ({domain}) created with auto-provisioned Service Principal.")
+                try:
+                    bp = bp_svc.create_blueprint(
+                        display_name=name,
+                        description=desc or f"{domain} domain blueprint",
+                        credential_type=cred_options[cred_label],
+                        tenant_id=tenant,
+                    )
+                except GraphAPIError as exc:
+                    st.error(
+                        f"Failed to create blueprint: {exc.message} "
+                        f"(code: {exc.error_code}, status: {exc.status_code}). "
+                        "Check the required Graph API permissions in README."
+                    )
+                    st.stop()
+                # Check if auto-provisioned principal exists
+                try:
+                    principals = bp_svc.get_principals_for_blueprint(bp.id)
+                except GraphAPIError:
+                    principals = []
+                if principals:
+                    st.success(f"Domain Blueprint **{name}** ({domain}) created with auto-provisioned Service Principal.")
+                else:
+                    st.warning(
+                        f"Domain Blueprint **{name}** ({domain}) created, but Service Principal "
+                        "auto-provisioning failed (missing `AgentIdentityBlueprintPrincipal.Create` permission). "
+                        "Grant the permission and create the principal from the dashboard."
+                    )
                 st.rerun()
 
 
@@ -251,7 +276,7 @@ def _render_create_identity(bp_svc: BlueprintService, store: dict) -> None:
 
 # ── Link Foundry Project ────────────────────────────────────────────────────
 
-def _render_create_resource(foundry_svc: FoundryService, store: dict) -> None:
+def _render_create_resource(foundry_svc: FoundryService, store: dict, config: AzureConfig = None) -> None:
     st.markdown("### Foundry Resources (AI Services Accounts)")
     st.markdown(
         "A **Foundry Resource** is an Azure AI Services (Cognitive Services) account. "
@@ -279,80 +304,75 @@ def _render_create_resource(foundry_svc: FoundryService, store: dict) -> None:
         st.info("No Foundry Resources found. Create one below or check your Azure credentials.")
 
     st.markdown("---")
-    st.markdown("#### Create a New Foundry Resource (Local)")
-    st.caption("This creates a local reference. To create a real Azure resource, use the Azure Portal or CLI.")
+    st.markdown("#### Create a New Foundry Resource")
+    st.caption("Creates an Azure AI Services account. Requires a valid Subscription ID and Azure credentials.")
 
     with st.form("create_resource_form", clear_on_submit=True):
         name = st.text_input(
             "Resource Name *",
-            placeholder="e.g. contoso-ai-services",
+            value="contoso-ai-svc360",
             help="Name of the Azure AI Services account",
         )
-        region = st.selectbox(
-            "Region",
-            ["eastus", "eastus2", "westus2", "westus3", "centralus",
-             "westeurope", "northeurope", "uksouth", "francecentral",
-             "swedencentral", "norwayeast", "germanywestcentral", "switzerlandnorth",
-             "southeastasia", "eastasia", "japaneast",
-             "australiaeast", "canadacentral", "brazilsouth",
-             "koreacentral", "centralindia", "uaenorth"],
-        )
+        regions = [
+            "swedencentral", "eastus", "eastus2", "westus2", "westus3", "centralus",
+            "westeurope", "northeurope", "uksouth", "francecentral",
+            "norwayeast", "germanywestcentral", "switzerlandnorth",
+            "southeastasia", "eastasia", "japaneast",
+            "australiaeast", "canadacentral", "brazilsouth",
+            "koreacentral", "centralindia", "uaenorth",
+        ]
+        region = st.selectbox("Region", regions)
         rg = st.text_input(
             "Resource Group",
             placeholder="e.g. rg-contoso-ai (auto-generated if blank)",
         )
+        default_sub = config.subscription_id if config else ""
         sub_id = st.text_input(
-            "Subscription ID",
+            "Subscription ID *",
+            value=default_sub,
             placeholder="00000000-0000-0000-0000-000000000000",
+            help="Required to provision the resource in Azure",
         )
 
         submitted = st.form_submit_button("Create Resource", type="primary")
         if submitted:
             if not name:
                 st.error("Resource Name is required.")
+            elif not sub_id or sub_id == "00000000-0000-0000-0000-000000000000":
+                st.error("A valid Subscription ID is required to create an Azure resource.")
+            elif foundry_svc._arm is None:
+                st.error("ARM client is not configured. Check your Azure credentials.")
             else:
-                foundry_svc.create_resource(
-                    name=name,
-                    region=region,
-                    resource_group=rg,
-                    subscription_id=sub_id,
-                )
-                st.success(f"Foundry Resource **{name}** created in **{region}**.")
-                st.rerun()
+                try:
+                    foundry_svc.create_resource(
+                        name=name,
+                        region=region,
+                        resource_group=rg,
+                        subscription_id=sub_id,
+                    )
+                    st.success(f"Foundry Resource **{name}** created in Azure ({region}).")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"Failed to create resource in Azure: {exc}")
 
 
-# ── Link Foundry Project (with domain + environment) ────────────────────────
+# ── Create Foundry Project ───────────────────────────────────────────────────
 
-def _render_create_foundry(bp_svc: BlueprintService, foundry_svc: FoundryService, store: dict) -> None:
-    st.markdown("### Link a Foundry Project to a Domain Blueprint")
+def _render_create_foundry(foundry_svc: FoundryService, store: dict) -> None:
+    st.markdown("### Create a Foundry Project")
     st.markdown(
         "A **Foundry Project** hosts your AI agents and lives inside a Foundry Resource. "
-        "Each project is linked to a **domain blueprint** — all agents in this project "
-        "use identities from that blueprint. Environment isolation (dev/test/prod) is "
-        "set at the project level."
+        "Projects are independent of Agent Identity Blueprints — blueprints live in "
+        "Entra ID while projects live in Azure ARM."
     )
-    st.info(
-        "💡 **Key insight:** Blueprints work at the **project level**, not the resource level. "
-        "One Foundry Resource can have multiple projects, and each project links to its own blueprint. "
-        "In the domain pattern, all projects in the same domain share a single blueprint.",
-        icon="ℹ️",
-    )
-
-    blueprints = bp_svc.list_blueprints()
-    if not blueprints:
-        st.warning("Create a Domain Blueprint first before linking a Foundry project.")
-        return
 
     # Discover real Azure resources if ARM client available
     if foundry_svc._arm is not None:
         foundry_svc.discover_azure_resources()
-        foundry_svc._save_linkages()  # Persist any existing linkages
 
     resources = foundry_svc.list_resources()
 
     # ── Resource selector (outside form for dynamic prepopulation) ────
-    bp_names = {bp.display_name: bp.id for bp in blueprints}
-
     resource_mode = st.radio(
         "Project Source",
         ["Link to existing Foundry Resource", "Create standalone project"],
@@ -361,9 +381,10 @@ def _render_create_foundry(bp_svc: BlueprintService, foundry_svc: FoundryService
     )
 
     selected_resource_id = ""
-    prepop_region = "eastus"
+    prepop_region = "swedencentral"
     prepop_rg = ""
     prepop_sub = ""
+    selected_resource_label = ""
 
     if resource_mode == "Link to existing Foundry Resource":
         if not resources:
@@ -391,14 +412,13 @@ def _render_create_foundry(bp_svc: BlueprintService, foundry_svc: FoundryService
         if existing_projects:
             st.markdown(f"**Existing projects under {selected_resource.name}:**")
             for ep in existing_projects:
-                env_icon = {"dev": "🟢", "test": "🟡", "prod": "🔴"}.get(ep.environment, "⚪")
-                st.markdown(f"  - {env_icon} **{ep.name}** ({ep.environment} / {ep.business_domain})")
+                st.markdown(f"  - ☁️ **{ep.name}** ({ep.region})")
 
     # ── Region options with preselection ──
     _ALL_REGIONS = [
-        "eastus", "eastus2", "westus2", "westus3", "centralus", "northcentralus", "southcentralus",
+        "swedencentral", "eastus", "eastus2", "westus2", "westus3", "centralus", "northcentralus", "southcentralus",
         "westeurope", "northeurope", "uksouth", "ukwest", "francecentral",
-        "swedencentral", "norwayeast", "germanywestcentral", "switzerlandnorth",
+        "norwayeast", "germanywestcentral", "switzerlandnorth",
         "southeastasia", "eastasia", "japaneast", "japanwest",
         "australiaeast", "australiasoutheast",
         "canadacentral", "canadaeast", "brazilsouth",
@@ -406,31 +426,11 @@ def _render_create_foundry(bp_svc: BlueprintService, foundry_svc: FoundryService
     ]
 
     with st.form("create_foundry_form", clear_on_submit=True):
-        selected_bp = st.selectbox(
-            "Domain Blueprint *",
-            options=list(bp_names.keys()),
-            help="The domain blueprint whose identities this Foundry project will use",
-        )
-
         proj_name = st.text_input(
             "Project Name *",
             placeholder="e.g. hr-agent-platform-dev",
             help="The Azure AI Foundry project name",
         )
-
-        col_env, col_domain = st.columns(2)
-        with col_env:
-            environment = st.selectbox(
-                "Environment *",
-                ["dev", "test", "prod"],
-                help="Environment for this project. Multiple projects in the same domain can have different environments.",
-            )
-        with col_domain:
-            domain = st.selectbox(
-                "Business Domain *",
-                options=BUSINESS_DOMAINS,
-                help="Should match the domain of the selected blueprint",
-            )
 
         if resource_mode == "Link to existing Foundry Resource":
             # Region & RG inherited from resource — show as read-only
@@ -452,7 +452,7 @@ def _render_create_foundry(bp_svc: BlueprintService, foundry_svc: FoundryService
                 placeholder="e.g. rg-contoso-ai (auto-generated if blank)",
             )
 
-        submitted = st.form_submit_button("Link Foundry Project", type="primary")
+        submitted = st.form_submit_button("Create Project", type="primary")
         if submitted:
             if not proj_name:
                 st.error("Project Name is required.")
@@ -460,34 +460,14 @@ def _render_create_foundry(bp_svc: BlueprintService, foundry_svc: FoundryService
                 try:
                     foundry_svc.create_project(
                         name=proj_name,
-                        blueprint_id=bp_names[selected_bp],
                         resource_id=selected_resource_id,
                         region=region,
                         resource_group=rg,
-                        environment=environment,
-                        business_domain=domain,
                     )
-                    st.success(
-                        f"Foundry Project **{proj_name}** ({environment}) created in Azure and linked to "
-                        f"blueprint **{selected_bp}** in domain **{domain}**."
-                    )
+                    st.success(f"Foundry Project **{proj_name}** created.")
                     st.rerun()
                 except Exception as exc:
-                    st.error(f"Failed to create project in Azure: {exc}")
-
-    # ── Domain summary ──────────────────────────────────────────────────
-    domain_summary = foundry_svc.get_domain_summary()
-    if domain_summary:
-        st.markdown("---")
-        st.markdown("### Domain Summary")
-        for domain, info in domain_summary.items():
-            envs = ", ".join(sorted(info["environments"]))
-            st.markdown(
-                f"- **{domain}** — {len(info['projects'])} project(s), "
-                f"{info['agent_count']} agent(s), "
-                f"environments: {envs}, "
-                f"{len(info['blueprint_ids'])} blueprint(s)"
-            )
+                    st.error(f"Failed to create project: {exc}")
 
 
 # ── Publish Agent ─────────────────────────────────────────────────────────────
@@ -496,8 +476,7 @@ def _render_publish_agent(bp_svc: BlueprintService, foundry_svc: FoundryService,
     st.markdown("### Publish a Foundry Agent")
     st.markdown(
         "A **Foundry Agent** is a deployed AI agent within a Foundry project. "
-        "Each agent runs under a specific **Agent Identity** from the project's domain blueprint. "
-        "When published, Foundry creates a per-agent blueprint under the project blueprint."
+        "Each agent is linked to an **Agent Identity** from Entra ID."
     )
 
     projects = foundry_svc.list_projects()
@@ -505,19 +484,19 @@ def _render_publish_agent(bp_svc: BlueprintService, foundry_svc: FoundryService,
         st.info("Create a Foundry Project first (in the **Foundry Project** tab).")
         return
 
+    # Get all identities across all blueprints
+    all_identities = []
+    for bp in bp_svc.list_blueprints():
+        all_identities.extend(bp_svc.get_identities_for_blueprint(bp.id))
+
     with st.form("add_agent_form", clear_on_submit=True):
-        proj_options = {f"{fp.name} ({fp.environment} / {fp.business_domain})": fp.id for fp in projects}
+        proj_options = {f"{fp.name} ({fp.region})": fp.id for fp in projects}
         selected_proj_label = st.selectbox("Foundry Project *", options=list(proj_options.keys()))
-        selected_proj_id = proj_options[selected_proj_label]
 
-        # Get the project's blueprint to filter identities
-        project = foundry_svc.get_project(selected_proj_id)
-        bp_identities = bp_svc.get_identities_for_blueprint(project.blueprint_id)
-
-        if not bp_identities:
-            st.warning("No agent identities exist under this project's blueprint. Create one first.")
+        if not all_identities:
+            st.warning("No agent identities exist. Create one in the **Agent Identity** tab first.")
         else:
-            id_options = {ai.display_name: ai.id for ai in bp_identities}
+            id_options = {ai.display_name: ai.id for ai in all_identities}
             selected_id = st.selectbox(
                 "Agent Identity *",
                 options=list(id_options.keys()),
@@ -539,7 +518,7 @@ def _render_publish_agent(bp_svc: BlueprintService, foundry_svc: FoundryService,
                     st.error("Agent Name is required.")
                 else:
                     foundry_svc.add_agent(
-                        project_id=selected_proj_id,
+                        project_id=proj_options[selected_proj_label],
                         name=agent_name,
                         agent_identity_id=id_options[selected_id],
                         model=model,
@@ -572,10 +551,7 @@ def _render_delete(bp_svc: BlueprintService, foundry_svc: FoundryService, store:
             )
             if st.button("Delete Blueprint", key="del_bp_btn", type="secondary"):
                 bp_svc.delete_blueprint(bp_names[selected])
-                # Also remove linked Foundry projects
-                for fp in foundry_svc.get_projects_for_blueprint(bp_names[selected]):
-                    foundry_svc.delete_project(fp.id)
-                st.success(f"Blueprint **{selected}** and linked entities deleted.")
+                st.success(f"Blueprint **{selected}** and its entities deleted.")
                 st.rerun()
         else:
             st.info("No blueprints to delete.")
@@ -584,7 +560,7 @@ def _render_delete(bp_svc: BlueprintService, foundry_svc: FoundryService, store:
         st.markdown("#### Delete Foundry Project")
         projects = foundry_svc.list_projects()
         if projects:
-            proj_names = {f"{fp.name} ({fp.environment})": fp.id for fp in projects}
+            proj_names = {f"{fp.name} ({fp.region})": fp.id for fp in projects}
             selected_proj = st.selectbox(
                 "Select Project",
                 options=list(proj_names.keys()),

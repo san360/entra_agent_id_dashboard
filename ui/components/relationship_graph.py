@@ -112,22 +112,8 @@ def build_relationship_graph(
                 fontcolor=NODE_BLUEPRINT,
             )
 
-    # ── Foundry projects from local store (linked via blueprint_id) ───
-    # Connect domain blueprints to the SAME project node if it already
-    # exists from Entra metadata, unifying the graph.
+    # ── Foundry projects from local store ───
     for fp in foundry_svc.list_projects():
-        if not fp.blueprint_id:
-            continue
-        # Only show if this project's blueprint is in scope
-        if selected_blueprint_id and fp.blueprint_id != selected_blueprint_id:
-            # Also check if any Entra blueprint for this project is in scope
-            in_scope = any(
-                bp.foundry_project_name == fp.name and bp.id == selected_blueprint_id
-                for bp in bp_svc.list_blueprints()
-            )
-            if not in_scope:
-                continue
-
         # Reuse existing project node if the project was already rendered
         # from Entra metadata (same project name)
         existing_node = project_name_to_node.get(fp.name)
@@ -139,38 +125,15 @@ def build_relationship_graph(
             rendered_foundry.add(fp.id)
             fp_node_id = f"fp_{fp.id}"
             project_name_to_node[fp.name] = fp_node_id
-            env_icon = {"dev": "🟢", "test": "🟡", "prod": "🔴"}.get(fp.environment, "⚪")
             dot.node(
                 fp_node_id,
-                f"☁️ {fp.name}\n(Foundry Project)\n"
-                f"{env_icon} {fp.environment} — {fp.business_domain}",
+                f"☁️ {fp.name}\n(Foundry Project)\n{fp.region}",
                 fillcolor=_hex_to_lighter(NODE_FOUNDRY),
                 color=NODE_FOUNDRY,
                 fontcolor="#1A1A1A",
                 penwidth="2",
             )
 
-        # Ensure the domain blueprint node exists
-        if fp.blueprint_id not in rendered_bp:
-            bp_obj = bp_svc.get_blueprint(fp.blueprint_id)
-            if bp_obj:
-                rendered_bp.add(fp.blueprint_id)
-                dot.node(
-                    f"bp_{fp.blueprint_id}",
-                    f"📋 {bp_obj.display_name}\n(Domain Blueprint)",
-                    fillcolor=_hex_to_lighter(NODE_BLUEPRINT),
-                    color=NODE_BLUEPRINT,
-                    fontcolor="#1A1A1A",
-                    penwidth="2",
-                )
-        # Connect domain blueprint → project (governance link)
-        dot.edge(
-            f"bp_{fp.blueprint_id}", fp_node_id,
-            label="governs",
-            style="bold",
-            color=NODE_BLUEPRINT,
-            fontcolor=NODE_BLUEPRINT,
-        )
         # Show agents under this project
         for agent in fp.agents:
             dot.node(

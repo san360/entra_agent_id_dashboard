@@ -165,8 +165,17 @@ class BlueprintService:
         bp = Blueprint.from_graph_response(data, tenant_id)
         self._cache.set(f"blueprint_{bp.id}", bp)
         self._cache.invalidate("blueprints_list")
-        # Auto-create a principal
-        self.create_principal(bp.id)
+        # Auto-create a principal (best-effort; may fail if
+        # AgentIdentityBlueprintPrincipal.Create permission is missing)
+        try:
+            self.create_principal(bp.id)
+        except GraphAPIError as exc:
+            logger.warning(
+                "Auto-create principal for blueprint %s failed: %s. "
+                "Grant AgentIdentityBlueprintPrincipal.Create permission and "
+                "create the principal manually from the dashboard.",
+                bp.id, exc,
+            )
         return bp
 
     def delete_blueprint(self, blueprint_id: str) -> None:
@@ -220,10 +229,16 @@ class BlueprintService:
                         )
                         time.sleep(delay)
                         continue
+                # Permission denied — no point retrying
+                if exc.status_code == 403:
+                    raise
                 # Principal may already exist
-                existing = self.get_principals_for_blueprint(blueprint_id)
-                if existing:
-                    return existing[0]
+                try:
+                    existing = self.get_principals_for_blueprint(blueprint_id)
+                    if existing:
+                        return existing[0]
+                except GraphAPIError:
+                    pass
                 raise
 
         # All retries exhausted

@@ -23,6 +23,3 @@ env/
 # OS
 .DS_Store
 Thumbs.db
-
-# App artifacts
-.foundry_linkages.json

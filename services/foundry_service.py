@@ -1,20 +1,17 @@
-"""Service for managing Foundry resources, projects, and agent associations (local state).
+"""Service for managing Foundry resources, projects, and agent associations.
 
 Hierarchy:
   FoundryResource (AI Services account)  — 1 per subscription/region
-    └── FoundryProject                    — N per resource, each linked to a Blueprint
+    └── FoundryProject                    — N per resource
           └── FoundryAgent                — N per project, each linked to an AgentIdentity
 
-Blueprints are scoped at the PROJECT level.
-In the 'Blueprint per Business Domain' pattern, multiple projects in the same
-domain share a single domain-level blueprint.
+Foundry projects and Agent Identity Blueprints are independent systems.
+Blueprints live in Entra ID (Graph API); Foundry projects live in Azure ARM.
 """
 
 from __future__ import annotations
 
-import json
 import logging
-import os
 import uuid
 from typing import Dict, List, Optional
 
@@ -22,55 +19,11 @@ from models.foundry import FoundryResource, FoundryProject, FoundryAgent
 
 logger = logging.getLogger(__name__)
 
-# File to persist project ↔ blueprint linkages across session restarts
-_LINKAGE_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".foundry_linkages.json")
-
 
 class FoundryService:
     def __init__(self, store: Optional[dict] = None, arm_client=None):
         self._store = store
         self._arm = arm_client  # Optional ARMClient for real Azure resource discovery
-
-    # ── Linkage Persistence ───────────────────────────────────────────────
-
-    def _load_linkages(self) -> Dict[str, dict]:
-        """Load persisted project → blueprint/domain linkages from disk."""
-        try:
-            with open(_LINKAGE_FILE, "r") as f:
-                return json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError):
-            return {}
-
-    def _save_linkages(self) -> None:
-        """Persist current project → blueprint/domain linkages to disk."""
-        linkages = {}
-        for p in self._store.get("foundry_projects", {}).values():
-            if p.blueprint_id:
-                linkages[p.name] = {
-                    "blueprint_id": p.blueprint_id,
-                    "business_domain": p.business_domain,
-                    "environment": p.environment,
-                }
-        try:
-            with open(_LINKAGE_FILE, "w") as f:
-                json.dump(linkages, f, indent=2)
-        except OSError:
-            logger.warning("Failed to persist linkage file")
-
-    def _apply_linkages(self) -> None:
-        """Restore persisted blueprint linkages to discovered projects."""
-        linkages = self._load_linkages()
-        if not linkages:
-            return
-        for p in self._store.get("foundry_projects", {}).values():
-            short_name = p.name.split("/")[-1] if "/" in p.name else p.name
-            info = linkages.get(short_name)
-            if info and not p.blueprint_id:
-                p.blueprint_id = info["blueprint_id"]
-                if info.get("business_domain"):
-                    p.business_domain = info["business_domain"]
-                if info.get("environment"):
-                    p.environment = info["environment"]
 
     # ── Foundry Resources ─────────────────────────────────────────────────
 
@@ -87,10 +40,27 @@ class FoundryService:
         resource_group: str = "",
         subscription_id: str = "",
     ) -> FoundryResource:
+        rg = resource_group or f"rg-{name}"
+
+        # If ARM client and subscription are available, provision in Azure
+        if self._arm and subscription_id:
+            try:
+                self._arm.ensure_resource_group(subscription_id, rg, region)
+                result = self._arm.create_cognitive_account(
+                    subscription_id=subscription_id,
+                    resource_group=rg,
+                    account_name=name,
+                    location=region,
+                )
+                logger.info("Created AI Services account '%s' in Azure", name)
+            except Exception as exc:
+                logger.error("ARM resource creation failed: %s", exc)
+                raise
+
         resource = FoundryResource(
             name=name,
             region=region,
-            resource_group=resource_group or f"rg-{name}",
+            resource_group=rg,
             subscription_id=subscription_id,
         )
         self._store.setdefault("foundry_resources", {})[resource.id] = resource
@@ -116,50 +86,33 @@ class FoundryService:
     def get_project(self, project_id: str) -> Optional[FoundryProject]:
         return self._store.get("foundry_projects", {}).get(project_id)
 
-    def get_projects_for_blueprint(self, blueprint_id: str) -> List[FoundryProject]:
-        return [
-            p for p in self._store.get("foundry_projects", {}).values()
-            if p.blueprint_id == blueprint_id
-        ]
-
-    def get_projects_by_domain(self, domain: str) -> List[FoundryProject]:
-        return [
-            p for p in self._store.get("foundry_projects", {}).values()
-            if p.business_domain == domain
-        ]
-
-    def get_projects_by_environment(self, environment: str) -> List[FoundryProject]:
-        return [
-            p for p in self._store.get("foundry_projects", {}).values()
-            if p.environment == environment
-        ]
-
     def create_project(
         self,
         name: str,
-        blueprint_id: str,
         resource_id: str = "",
         region: str = "eastus",
         resource_group: str = "",
-        environment: str = "dev",
-        business_domain: str = "General",
     ) -> FoundryProject:
         # If linked to an existing Foundry resource, create the project in Azure via ARM
         parent_resource = self.get_resource(resource_id) if resource_id else None
-        arm_created = False
         endpoint = ""
 
         if self._arm and parent_resource and parent_resource.subscription_id:
             try:
+                # Ensure the parent account has allowProjectManagement enabled
+                self._arm.create_cognitive_account(
+                    subscription_id=parent_resource.subscription_id,
+                    resource_group=parent_resource.resource_group,
+                    account_name=parent_resource.name,
+                    location=parent_resource.region,
+                )
                 result = self._arm.create_foundry_project(
                     subscription_id=parent_resource.subscription_id,
                     resource_group=parent_resource.resource_group,
                     account_name=parent_resource.name,
                     project_name=name,
                     location=parent_resource.region,
-                    description=f"{business_domain} {environment} project",
                 )
-                arm_created = True
                 endpoint = (
                     result.get("properties", {})
                     .get("endpoints", {})
@@ -172,24 +125,19 @@ class FoundryService:
 
         project = FoundryProject(
             name=name,
-            blueprint_id=blueprint_id,
             resource_id=resource_id,
             region=region,
             resource_group=resource_group or f"rg-{name}",
-            environment=environment,
-            business_domain=business_domain,
         )
         if endpoint:
             project.endpoint = endpoint
         if parent_resource and parent_resource.subscription_id:
             project.subscription_id = parent_resource.subscription_id
         self._store.setdefault("foundry_projects", {})[project.id] = project
-        self._save_linkages()
         return project
 
     def delete_project(self, project_id: str) -> None:
         self._store.get("foundry_projects", {}).pop(project_id, None)
-        self._save_linkages()
 
     # ── Foundry Agents ────────────────────────────────────────────────────
 
@@ -234,26 +182,6 @@ class FoundryService:
                 if agent.id == agent_id:
                     return project
         return None
-
-    # ── Domain Summary ────────────────────────────────────────────────────
-
-    def get_domain_summary(self) -> Dict[str, dict]:
-        """Summarize projects, agents, and environments per business domain."""
-        summary: Dict[str, dict] = {}
-        for project in self._store.get("foundry_projects", {}).values():
-            domain = project.business_domain
-            if domain not in summary:
-                summary[domain] = {
-                    "projects": [],
-                    "environments": set(),
-                    "agent_count": 0,
-                    "blueprint_ids": set(),
-                }
-            summary[domain]["projects"].append(project)
-            summary[domain]["environments"].add(project.environment)
-            summary[domain]["agent_count"] += len(project.agents)
-            summary[domain]["blueprint_ids"].add(project.blueprint_id)
-        return summary
 
     # ── Azure Resource Discovery ──────────────────────────────────────────
 
@@ -322,16 +250,12 @@ class FoundryService:
         # when a short-name entry for the same project+resource already exists
         self._dedup_projects()
 
-        # Restore persisted blueprint linkages to discovered projects
-        self._apply_linkages()
-
         return self.list_resources()
 
     def _dedup_projects(self) -> None:
         """Remove duplicate project entries that differ only by name format.
 
-        Keeps the entry with a blueprint_id (manually linked). If neither has
-        one, keeps the short-name entry.
+        Keeps the short-name entry if available, otherwise the first entry.
         """
         projects = self._store.get("foundry_projects", {})
         # Group by (short_name, resource_id)
@@ -345,25 +269,16 @@ class FoundryService:
         for key, pids in groups.items():
             if len(pids) <= 1:
                 continue
-            # Keep the one with blueprint_id; otherwise keep first short-name entry
+            # Prefer short name
             keep = None
             for pid in pids:
-                if projects[pid].blueprint_id:
+                if "/" not in projects[pid].name:
                     keep = pid
                     break
-            if keep is None:
-                # Prefer short name
-                for pid in pids:
-                    if "/" not in projects[pid].name:
-                        keep = pid
-                        break
             if keep is None:
                 keep = pids[0]
             for pid in pids:
                 if pid != keep:
-                    # Merge blueprint_id if the removed entry had one
-                    if projects[pid].blueprint_id and not projects[keep].blueprint_id:
-                        projects[keep].blueprint_id = projects[pid].blueprint_id
                     remove_ids.append(pid)
             # Normalize the kept entry's name to short form
             short_name = key[0]
@@ -382,12 +297,7 @@ class FoundryService:
     def _discover_projects_for_account(
         self, subscription_id: str, resource_group: str, account_name: str, resource_id: str
     ) -> None:
-        """Discover projects under a Cognitive Services account and sync with local store.
-
-        Adds new projects from Azure and removes local projects that no longer
-        exist in Azure (unless they have a blueprint_id, meaning they were
-        manually linked and should be preserved).
-        """
+        """Discover projects under a Cognitive Services account and sync with local store."""
         if self._arm is None:
             return
         try:
@@ -422,7 +332,6 @@ class FoundryService:
 
             project = FoundryProject(
                 name=short_name,
-                blueprint_id="",  # Not linked to a blueprint yet
                 resource_id=resource_id,
                 resource_group=resource_group,
                 region=location,
@@ -431,15 +340,13 @@ class FoundryService:
             self._store.setdefault("foundry_projects", {})[project.id] = project
 
         # Remove local projects that no longer exist in Azure
-        # (only if they were auto-discovered, i.e. no blueprint_id set)
         stale_ids = []
         for pid, p in self._store.get("foundry_projects", {}).items():
             if p.resource_id != resource_id:
                 continue
             p_short = p.name.split("/")[-1] if "/" in p.name else p.name
             if p_short not in azure_short_names:
-                if not p.blueprint_id:
-                    stale_ids.append(pid)
+                stale_ids.append(pid)
         for pid in stale_ids:
             self._store["foundry_projects"].pop(pid, None)
 

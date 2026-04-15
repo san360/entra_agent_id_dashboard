@@ -2,9 +2,7 @@
 """Cleanup script — deletes ALL agent identity blueprints, their service principals,
 agent identities, and agent users from the Entra tenant.
 
-Also removes local session artifacts (.foundry_linkages.json).
-
-Hierarchy (each Foundry project gets its own independent blueprint chain):
+Hierarchy:
     Foundry Resource (Microsoft.CognitiveServices/account)
      └── Foundry Project (account/project)  ← blueprint scoped HERE
           └── Project Blueprint (auto-created by Foundry 1P app)
@@ -64,8 +62,6 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from config.azure_config import load_azure_config
 from services.graph_client import GraphClient, GraphAPIError
-
-LINKAGE_FILE = os.path.join(os.path.dirname(__file__), ".foundry_linkages.json")
 
 # Required Graph API permission role IDs for deletion
 REQUIRED_ROLES = {
@@ -297,16 +293,6 @@ Required permissions:
             # Brief pause to avoid throttling
             time.sleep(0.5)
 
-    # ── 5. Clean up local files ────────────────────────────────────────
-    print("\n🧹 Local cleanup...")
-    if os.path.exists(LINKAGE_FILE):
-        if dry:
-            print(f"   [DRY] Would delete {LINKAGE_FILE}")
-        else:
-            os.remove(LINKAGE_FILE)
-            print(f"   ✅ Deleted {LINKAGE_FILE}")
-    else:
-        print(f"   No linkage file found at {LINKAGE_FILE}")
 
     # ── Summary ────────────────────────────────────────────────────────
     print("\n" + "=" * 60)

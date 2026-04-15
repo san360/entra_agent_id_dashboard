@@ -69,9 +69,9 @@ def render(
     _metric_card(cols[3], "Resources", len(foundry_resources), NODE_RESOURCE)
     _metric_card(cols[4], "Projects", len(all_project_names), NODE_FOUNDRY)
     _metric_card(cols[5], "Agents", foundry_agent_count, NODE_AGENT)
-    # Unique domains
-    domains = {fp.business_domain for fp in foundry_projects if hasattr(fp, 'business_domain')}
-    _metric_card(cols[6], "Domains", len(domains), NODE_DOMAIN)
+    # Unique regions
+    regions = {fp.region for fp in foundry_projects}
+    _metric_card(cols[6], "Regions", len(regions), NODE_DOMAIN)
 
     st.markdown("---")
 
@@ -182,43 +182,26 @@ def render(
 
         # Show local store projects (linked via blueprint_id)
         if foundry_projects:
-            # Group by domain
-            domain_groups: dict = {}
             for fp in foundry_projects:
-                domain = getattr(fp, 'business_domain', 'General')
-                domain_groups.setdefault(domain, []).append(fp)
-
-            for domain, projects in sorted(domain_groups.items()):
-                st.markdown(f"##### 🏷️ Domain: {domain}")
-                for fp in projects:
-                    bp = bp_svc.get_blueprint(fp.blueprint_id) if fp.blueprint_id else None
-                    bp_name = bp.display_name if bp else "—"
-                    env_icon = {"dev": "🟢", "test": "🟡", "prod": "🔴"}.get(
-                        getattr(fp, 'environment', ''), "⚪"
-                    )
-                    env = getattr(fp, 'environment', 'N/A')
-                    with st.expander(
-                        f"☁️ {fp.name} {env_icon} {env} — linked to {bp_name}",
-                        expanded=False,
-                    ):
-                        c1, c2 = st.columns(2)
-                        with c1:
-                            st.markdown(f"**Region:** {fp.region}")
-                            st.markdown(f"**Environment:** {env}")
-                            st.markdown(f"**Domain:** {domain}")
-                            st.markdown(f"**Resource Group:** {fp.resource_group}")
-                            st.markdown(f"**Endpoint:** `{fp.endpoint}`")
-                            st.markdown(f"**Blueprint:** {bp_name}")
-                        with c2:
-                            st.markdown(f"**Agents:** {len(fp.agents)}")
-                            for agent in fp.agents:
-                                ai = bp_svc.get_identity(agent.agent_identity_id)
-                                ai_name = ai.display_name if ai else "Unknown"
-                                status_icon = "🟢" if agent.status == "active" else "🟡"
-                                st.markdown(
-                                    f"  {status_icon} **{agent.name}** → {ai_name} "
-                                    f"(model: {agent.model})"
-                                )
+                with st.expander(
+                    f"☁️ {fp.name} — {fp.region}",
+                    expanded=False,
+                ):
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        st.markdown(f"**Region:** {fp.region}")
+                        st.markdown(f"**Resource Group:** {fp.resource_group}")
+                        st.markdown(f"**Endpoint:** `{fp.endpoint}`")
+                    with c2:
+                        st.markdown(f"**Agents:** {len(fp.agents)}")
+                        for agent in fp.agents:
+                            ai = bp_svc.get_identity(agent.agent_identity_id)
+                            ai_name = ai.display_name if ai else "Unknown"
+                            status_icon = "🟢" if agent.status == "active" else "🟡"
+                            st.markdown(
+                                f"  {status_icon} **{agent.name}** → {ai_name} "
+                                f"(model: {agent.model})"
+                            )
 
         if not foundry_from_entra and not foundry_projects:
             st.info("No Foundry projects linked yet.")
