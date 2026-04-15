@@ -1,0 +1,271 @@
+"""Retro-Tech Terminal theme configuration."""
+
+# ── Color Palette ──────────────────────────────────────────────────────────────
+BG_PRIMARY = "#0D0208"
+BG_SECONDARY = "#0A1F0A"
+GREEN_BRIGHT = "#00FF41"
+GREEN_MID = "#00CC33"
+GREEN_DIM = "#008F11"
+GREEN_FAINT = "#003B00"
+AMBER_WARN = "#FFB000"
+RED_ALERT = "#FF3333"
+WHITE_TEXT = "#CCFFCC"
+
+# ── Font ───────────────────────────────────────────────────────────────────────
+FONT_FAMILY = "'Share Tech Mono', 'Courier New', 'Consolas', monospace"
+FONT_IMPORT = "https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap"
+
+# ── CSS Injection ──────────────────────────────────────────────────────────────
+GLOBAL_CSS = f"""
+@import url('{FONT_IMPORT}');
+
+/* ── Base Reset ──────────────────────────────────────────────────────────── */
+html, body, [class*="css"] {{
+    font-family: {FONT_FAMILY};
+    color: {GREEN_BRIGHT};
+}}
+
+.stApp {{
+    background-color: {BG_PRIMARY};
+}}
+
+/* ── CRT Scanline Overlay ────────────────────────────────────────────────── */
+.stApp::after {{
+    content: "";
+    position: fixed;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    background: repeating-linear-gradient(
+        0deg,
+        rgba(0, 0, 0, 0.12) 0px,
+        rgba(0, 0, 0, 0.12) 1px,
+        transparent 1px,
+        transparent 3px
+    );
+    pointer-events: none;
+    z-index: 9999;
+}}
+
+/* ── Sidebar ─────────────────────────────────────────────────────────────── */
+section[data-testid="stSidebar"] {{
+    background-color: {BG_SECONDARY};
+    border-right: 1px solid {GREEN_DIM};
+}}
+section[data-testid="stSidebar"] .stRadio label {{
+    color: {GREEN_BRIGHT} !important;
+    font-family: {FONT_FAMILY};
+}}
+section[data-testid="stSidebar"] .stRadio div[role="radiogroup"] label:hover {{
+    color: {WHITE_TEXT} !important;
+    text-shadow: 0 0 8px {GREEN_BRIGHT};
+}}
+
+/* ── Buttons ─────────────────────────────────────────────────────────────── */
+.stButton > button {{
+    background-color: transparent;
+    color: {GREEN_BRIGHT};
+    border: 1px solid {GREEN_DIM};
+    border-radius: 0;
+    font-family: {FONT_FAMILY};
+    transition: all 0.2s;
+}}
+.stButton > button:hover {{
+    border-color: {GREEN_BRIGHT};
+    box-shadow: 0 0 10px rgba(0, 255, 65, 0.3);
+    color: {WHITE_TEXT};
+}}
+.stButton > button:active {{
+    background-color: {GREEN_FAINT};
+}}
+
+/* ── Input Fields ────────────────────────────────────────────────────────── */
+.stTextInput input, .stSelectbox select, .stTextArea textarea {{
+    background-color: {BG_SECONDARY} !important;
+    color: {GREEN_BRIGHT} !important;
+    border: 1px solid {GREEN_DIM} !important;
+    border-radius: 0 !important;
+    font-family: {FONT_FAMILY} !important;
+}}
+.stTextInput input:focus, .stSelectbox select:focus, .stTextArea textarea:focus {{
+    border-color: {GREEN_BRIGHT} !important;
+    box-shadow: 0 0 5px rgba(0, 255, 65, 0.2) !important;
+}}
+
+/* ── Selectbox Dropdown ──────────────────────────────────────────────────── */
+div[data-baseweb="select"] {{
+    font-family: {FONT_FAMILY};
+}}
+div[data-baseweb="select"] > div {{
+    background-color: {BG_SECONDARY} !important;
+    border: 1px solid {GREEN_DIM} !important;
+    border-radius: 0 !important;
+    color: {GREEN_BRIGHT} !important;
+}}
+
+/* ── Multiselect ─────────────────────────────────────────────────────────── */
+.stMultiSelect > div > div {{
+    background-color: {BG_SECONDARY} !important;
+    border: 1px solid {GREEN_DIM} !important;
+    border-radius: 0 !important;
+    color: {GREEN_BRIGHT} !important;
+}}
+
+/* ── Expanders ───────────────────────────────────────────────────────────── */
+.streamlit-expanderHeader {{
+    background-color: {BG_SECONDARY} !important;
+    color: {GREEN_BRIGHT} !important;
+    border: 1px solid {GREEN_DIM} !important;
+    border-radius: 0 !important;
+    font-family: {FONT_FAMILY};
+}}
+details {{
+    border: 1px solid {GREEN_DIM} !important;
+    border-radius: 0 !important;
+}}
+
+/* ── Tabs ────────────────────────────────────────────────────────────────── */
+.stTabs [data-baseweb="tab-list"] {{
+    gap: 0;
+    border-bottom: 1px solid {GREEN_DIM};
+}}
+.stTabs [data-baseweb="tab"] {{
+    background-color: transparent;
+    color: {GREEN_DIM};
+    border: 1px solid {GREEN_DIM};
+    border-bottom: none;
+    border-radius: 0;
+    font-family: {FONT_FAMILY};
+    padding: 8px 16px;
+}}
+.stTabs [aria-selected="true"] {{
+    background-color: {GREEN_FAINT} !important;
+    color: {GREEN_BRIGHT} !important;
+    border-color: {GREEN_BRIGHT} !important;
+}}
+
+/* ── Code Blocks ─────────────────────────────────────────────────────────── */
+.stCodeBlock, pre, code {{
+    background-color: {BG_SECONDARY} !important;
+    color: {GREEN_BRIGHT} !important;
+    border-radius: 0 !important;
+    font-family: {FONT_FAMILY} !important;
+    border: 1px solid {GREEN_FAINT};
+}}
+
+/* ── Markdown ────────────────────────────────────────────────────────────── */
+.stMarkdown, .stMarkdown p, .stMarkdown li, .stMarkdown h1,
+.stMarkdown h2, .stMarkdown h3, .stMarkdown h4 {{
+    color: {GREEN_BRIGHT} !important;
+    font-family: {FONT_FAMILY} !important;
+}}
+
+/* ── Blinking Cursor ─────────────────────────────────────────────────────── */
+@keyframes blink {{
+    0%, 100% {{ opacity: 1; }}
+    50% {{ opacity: 0; }}
+}}
+.cursor-blink {{
+    animation: blink 1s step-end infinite;
+    color: {GREEN_BRIGHT};
+}}
+
+/* ── Terminal Box ────────────────────────────────────────────────────────── */
+.terminal-box {{
+    font-family: {FONT_FAMILY};
+    color: {GREEN_BRIGHT};
+    background-color: {BG_PRIMARY};
+    padding: 0;
+    white-space: pre;
+    line-height: 1.4;
+    overflow-x: auto;
+}}
+.terminal-box .tb-title {{
+    color: {WHITE_TEXT};
+}}
+.terminal-box .tb-key {{
+    color: {GREEN_DIM};
+}}
+.terminal-box .tb-val {{
+    color: {GREEN_BRIGHT};
+}}
+
+/* ── Simulated Banner ────────────────────────────────────────────────────── */
+.sim-banner {{
+    background-color: rgba(255, 176, 0, 0.1);
+    border: 1px solid {AMBER_WARN};
+    color: {AMBER_WARN};
+    padding: 8px 16px;
+    font-family: {FONT_FAMILY};
+    text-align: center;
+    margin-bottom: 16px;
+    font-size: 0.85em;
+}}
+
+/* ── Status Indicators ───────────────────────────────────────────────────── */
+.status-green {{ color: {GREEN_BRIGHT}; }}
+.status-amber {{ color: {AMBER_WARN}; }}
+.status-red   {{ color: {RED_ALERT}; }}
+
+/* ── JSON Display ────────────────────────────────────────────────────────── */
+.stJson {{
+    background-color: {BG_SECONDARY} !important;
+    border: 1px solid {GREEN_DIM} !important;
+    border-radius: 0 !important;
+}}
+
+/* ── DataFrame ───────────────────────────────────────────────────────────── */
+.stDataFrame {{
+    border: 1px solid {GREEN_DIM} !important;
+    border-radius: 0 !important;
+}}
+.stDataFrame th {{
+    background-color: {GREEN_FAINT} !important;
+    color: {GREEN_BRIGHT} !important;
+}}
+.stDataFrame td {{
+    background-color: {BG_PRIMARY} !important;
+    color: {GREEN_BRIGHT} !important;
+}}
+
+/* ── Metric Cards ────────────────────────────────────────────────────────── */
+div[data-testid="stMetric"] {{
+    background-color: {BG_SECONDARY};
+    border: 1px solid {GREEN_DIM};
+    padding: 12px;
+}}
+div[data-testid="stMetric"] label {{
+    color: {GREEN_DIM} !important;
+}}
+div[data-testid="stMetric"] div[data-testid="stMetricValue"] {{
+    color: {GREEN_BRIGHT} !important;
+}}
+
+/* ── Radio buttons ───────────────────────────────────────────────────────── */
+.stRadio > div {{
+    color: {GREEN_BRIGHT} !important;
+}}
+.stRadio label {{
+    color: {GREEN_BRIGHT} !important;
+}}
+
+/* ── Divider ─────────────────────────────────────────────────────────────── */
+hr {{
+    border-color: {GREEN_DIM} !important;
+}}
+
+/* ── Scrollbar ───────────────────────────────────────────────────────────── */
+::-webkit-scrollbar {{
+    width: 8px;
+    height: 8px;
+}}
+::-webkit-scrollbar-track {{
+    background: {BG_PRIMARY};
+}}
+::-webkit-scrollbar-thumb {{
+    background: {GREEN_DIM};
+    border-radius: 0;
+}}
+::-webkit-scrollbar-thumb:hover {{
+    background: {GREEN_MID};
+}}
+"""
